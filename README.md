@@ -47,3 +47,7 @@ Remove-Item Env:PLANNER_TEST_MODE -ErrorAction SilentlyContinue
 ## Security and trace notes
 
 The top-level `sensitive` object is excluded from model input and is never stored or returned. OTLP includes only contract-required correlation and span attributes; it never includes transcripts, prompts, tool arguments/results, authorization values, or raw observation bodies. Approval digests are SHA-256 of recursively key-sorted compact JSON. The agent returns dispatches but does not perform real production effects; tool outcomes are authoritative receipts supplied by the challenge runner.
+
+
+## Planner safety update (v2.2.0)
+The OpenAI planning prompt explicitly enforces the challenge's scaling-limit rule: when replicas are already at the permitted maximum, it must not select a capacity-increasing effect and should choose `page_owner` when that tool is permitted. It also explicitly prohibits arbitrary diagnostic argument values, including unsupported generic time windows. This is a prompt-level improvement; the hidden challenge must still verify exact incident-specific choices.
