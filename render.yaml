@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: observable-incident-triage-agent
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DATABASE_PATH
+        value: /tmp/incident_agent.sqlite3
