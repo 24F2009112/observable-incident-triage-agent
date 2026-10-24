@@ -24,7 +24,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 APP_NAME = "Observable Incident Triage Agent"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 DATABASE_PATH = os.getenv("DATABASE_PATH", "/tmp/incident_agent.sqlite3")
 MAX_BODY_BYTES = 3 * 1024 * 1024
 MAX_RESPONSE_BYTES = 768 * 1024
@@ -217,13 +217,13 @@ def schema_validate_arguments(tool: Dict[str, Any], args: Any, label: str) -> Di
 
 
 def llm_settings() -> Tuple[Optional[str], str, str]:
-    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    key = os.getenv("LLM_API_KEY") or gemini_key or os.getenv("OPENAI_API_KEY")
-    base = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL")
-    if not base:
-        base = "https://generativelanguage.googleapis.com/v1beta/openai/" if gemini_key else "https://api.openai.com/v1"
-    model = os.getenv("LLM_MODEL") or ("gemini-3.8-flash" if gemini_key else "gpt-4.1-mini")
-    return key, base.rstrip("/"), model
+    """Return the OpenAI API configuration only (no Gemini/provider auto-switching)."""
+    key = os.getenv("OPENAI_API_KEY")
+    # Keep the provider endpoint explicit so a stale Render LLM_BASE_URL cannot
+    # silently route prompts to a different provider.
+    base = "https://api.openai.com/v1"
+    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
+    return key, base, model
 
 
 async def planner_call(payload: Dict[str, Any], allowed_evidence: List[str]) -> Dict[str, Any]:
@@ -244,7 +244,7 @@ async def planner_call(payload: Dict[str, Any], allowed_evidence: List[str]) -> 
             "effect": {"toolName": effects[0], "arguments": schema_seed(catalog[effects[0]], payload["incident"])},
         }
     if not key:
-        fail(503, "AI planner is not configured; set GEMINI_API_KEY or OPENAI_API_KEY in the service environment")
+        fail(503, "AI planner is not configured; set OPENAI_API_KEY in the service environment")
 
     incident = copy.deepcopy(payload["incident"])
     # Sensitive is a top-level object and is intentionally never copied into model input.

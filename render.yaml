@@ -11,7 +11,5 @@ services:
         value: 3.12.7
       - key: DATABASE_PATH
         value: /tmp/incident_agent_v2.sqlite3
-      - key: LLM_BASE_URL
-        value: https://generativelanguage.googleapis.com/v1beta/openai/
-      - key: LLM_MODEL
-        value: gemini-3.8-flash
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini

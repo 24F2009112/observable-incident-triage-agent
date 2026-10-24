@@ -4,13 +4,12 @@ This service implements the receipt-driven contract at `POST /v2/incidents`, `PO
 
 ## Required model configuration
 
-The grader explicitly expects a real planning call for every first-seen `runId`. Configure a hosted model in Render Environment settings. The default provider is Gemini's OpenAI-compatible endpoint:
+The contract requires a real OpenAI planning call for every first-seen `runId`. Configure these variables in Render → Environment:
 
-- `GEMINI_API_KEY`: your secret Google AI Studio API key (set only in Render Environment, never commit it)
-- `LLM_BASE_URL`: `https://generativelanguage.googleapis.com/v1beta/openai/`
-- `LLM_MODEL`: `gemini-3.8-flash`
+- `OPENAI_API_KEY`: your OpenAI API key. Set it only as a Render secret; never commit it.
+- `OPENAI_MODEL`: optional model override. Defaults to `gpt-4.1-mini`.
 
-Alternatively set `OPENAI_API_KEY` with an OpenAI-compatible provider, plus `LLM_BASE_URL` and `LLM_MODEL`. The service never takes a key from the challenge form. If the key is missing, `POST /v2/incidents` returns a safe 503 and does not create a run.
+The service calls OpenAI's official API at `https://api.openai.com/v1/chat/completions`. It intentionally ignores legacy Gemini settings and `LLM_BASE_URL`, so stale settings cannot silently route requests to another provider. The service never accepts an API key from the challenge form. If the key is missing, `POST /v2/incidents` returns a safe 503 and does not create a run.
 
 The planner receives the transcript, allowed root causes, tool catalog and policy but not the top-level `sensitive` object. Model request span attributes record only the configured model name; prompts and transcript are not recorded in OTLP. Receipt handling and replay never call the model.
 
