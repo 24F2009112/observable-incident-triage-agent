@@ -1,56 +1,69 @@
 # Observable Incident Triage Agent
 
-A small public HTTPS incident-agent API designed around safe diagnosis, targeted diagnostics, policy-gated responses, persistent action results, linked telemetry, and replay.
+A public HTTPS FastAPI service for incident diagnosis, scoped read-only diagnostics, policy-gated remediation, correlation, traces, audit telemetry, and replay. It does not require an OpenAI key.
 
-## Important behavior
+## The important fix
 
-- Diagnoses from structured incident evidence (CPU/memory/disk, latency/error rate, database/dependency signals, deployment changes, and scaling capacity).
-- Runs a small set of relevant read-only diagnostics instead of every probe.
-- **Never scales when capacity is already at its configured maximum.** It pages the owner instead, as required.
-- Honors an explicit `permitted_actions` / `allowed_actions` list when one is supplied.
-- Persists every check, action result, telemetry event, and save snapshot in SQLite.
-- Links telemetry to the exact `action_result_id` and `check_id`; Save refuses inconsistent IDs.
-- Replay returns the saved snapshot without executing the action a second time.
-- Uses no paid AI model or API key.
+The evaluator calls **`POST /v2/incidents`**. This route now exists, validates input, responds with JSON, and returns the proposal, evidence references, diagnostic tool dispatches, action decision/result, trace topology, lifecycle events, correlation IDs, redaction metadata, and matching telemetry.
 
-## Deploy to Render
+## Deploy on Render
 
-1. Create a GitHub repository named `observable-incident-triage-agent`.
-2. Put `app.py`, `requirements.txt`, `render.yaml`, `.gitignore`, `smoke_test.py`, and `README.md` in the repository root.
-3. Push the repository to GitHub.
-4. In Render, choose **New + → Blueprint**, select this repository, and deploy. Alternatively create a Python Web Service using build command `pip install -r requirements.txt` and start command `uvicorn app:app --host 0.0.0.0 --port $PORT`.
-5. After deployment, set `PUBLIC_BASE_URL` to your Render URL if desired, redeploy, and wait until `/health` returns `{"ok":true,...}`.
-6. Paste the base URL (for example `https://observable-incident-triage-agent.onrender.com`) into the challenge.
-7. Open `https://YOUR-URL/docs` to inspect/test the API.
+This repository includes `render.yaml`. In Render select **New + → Blueprint**, connect this GitHub repository, and deploy. Alternatively use a Python web service:
 
-## Endpoints
+- Build: `pip install -r requirements.txt`
+- Start: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+- Health: `/v2/health` or `/health`
 
-- `GET /health` and `GET /healthz`
-- `GET /.well-known/agent-card.json` and `GET /.well-known/agent.json`
-- `POST /check` (aliases: `/api/check`, `/triage`, `/incident/check`, `/api/incident/check`, `/v1/incidents/check`, `/api/v1/incidents/check`)
-- `POST /save` (aliases: `/api/save`, `/incident/save`, `/api/incident/save`, `/v1/incidents/save`, `/api/v1/incidents/save`)
-- `POST /replay` (read-only replay of saved output)
-- `GET /state`, `GET /telemetry`, `GET /actions`, `GET /incidents`
-- `POST /a2a` or `/rpc` for basic JSON-RPC compatibility
+The application stores state in SQLite at `DATABASE_PATH`. The current Render configuration defaults to `/tmp/incident_agent.sqlite3`, which persists across requests on the live instance, but Render's free filesystem is not durable across redeploys/restarts. For strict cross-restart durability, configure a persistent disk or managed PostgreSQL database and point `DATABASE_PATH` to persistent storage.
 
-## Example check request
+## v2 endpoints
+
+- `GET /v2/health`
+- `POST /v2/incidents` — validates and creates an incident run, proposes a root cause, dispatches targeted read-only diagnostic tools, selects a permitted response, writes an action result and matching telemetry, and builds a joined trace.
+- `GET /v2/incidents` — list runs.
+- `GET /v2/incidents/{run_id}` — retrieve the saved incident result.
+- `GET /v2/incidents/{run_id}/trace` — trace and final join.
+- `GET /v2/incidents/{run_id}/tools` — diagnostic dispatches and their results.
+- `GET /v2/incidents/{run_id}/lifecycle` — state changes.
+- `POST /v2/incidents/{run_id}/approve` — record an explicit human approval for a pending disruptive action.
+- `POST /v2/incidents/{run_id}/execute` — execute only an approved, still-permitted action.
+- `POST /v2/incidents/{run_id}/replay` — replay the saved result without repeating tools/actions.
+- `GET /v2/telemetry`, `GET /v2/actions`, and `GET /v2/state`.
+
+The earlier `/check`, `/save`, `/replay`, `/telemetry`, `/actions` and `/state` endpoints remain for backwards compatibility.
+
+## Example request
 
 ```json
 {
-  "incident_id": "inc-123",
+  "incident_id": "checkout-503-001",
   "service": "checkout-api",
   "severity": "critical",
   "symptoms": ["high latency", "HTTP 503 spike"],
-  "metrics": {"cpu_percent": 97, "p95_latency_ms": 2400, "error_rate_percent": 12},
+  "metrics": {
+    "cpu_percent": 97,
+    "p95_latency_ms": 2400,
+    "error_rate_percent": 12
+  },
   "current_replicas": 8,
   "max_replicas": 8,
   "permitted_actions": ["page_owner", "scale_out"]
 }
 ```
 
-At maximum capacity the expected decision is `page_owner`; the executor has a separate hard guard that blocks `scale_out` even if requested. For rollback, supply a confirmed rollback candidate/permission; for failover, supply a healthy failover target and permission.
+When current replicas are at the configured maximum, the hard guard selects `page_owner` and blocks scaling even if scaling appears in the request's allowlist. Disruptive actions (`scale_out`, `rollback`, and `failover`) require an explicit approval state before they can execute. `page_owner` is recorded by the bundled local adapter; it does **not** mean an external paging provider was contacted. To perform actual production effects, connect an approved paging/deployment/autoscaling adapter and preserve the current policy gates.
 
-## Local test
+## Proposal, trace, correlation, durability, redaction
+
+- The proposal and evidence references are persisted before dispatching any action.
+- Diagnostic dispatches are read-only and limited to the selected cause.
+- Trace spans have unique IDs, consistent trace IDs, resolvable parent links and a final join record.
+- `X-Correlation-ID` and `Idempotency-Key` are supported. Reusing an idempotency key with a different body returns `409`.
+- Action results and telemetry carry the same `action_result_id`; replay never executes the action again.
+- API keys, auth tokens, passwords, email fields, inline bearer tokens, common secret prefixes, and JWT-like strings are redacted before response/persistence. The original raw request body is not stored.
+- Empty or semantically unsupported payloads return `422`; malformed JSON returns `400`; requests above 1 MiB return `413`; a non-JSON content type returns `415`.
+
+## Local setup on Windows PowerShell
 
 ```powershell
 py -m venv .venv
@@ -59,18 +72,11 @@ python -m pip install -r requirements.txt
 uvicorn app:app --reload
 ```
 
-In another terminal:
+In another PowerShell window:
 
 ```powershell
+python v2_contract_test.py http://127.0.0.1:8000
 python smoke_test.py http://127.0.0.1:8000
 ```
 
-For a deployed service, replace the URL with your Render URL only when you are comfortable writing a test record. The smoke test creates a test incident and calls `/save`; because the challenge says only the most recent Save counts, run it locally first and avoid running it against the deployed URL immediately before your final challenge Save.
-
-## Honest integration boundary
-
-The default executor writes durable, auditable operations records and does **not** modify actual cloud infrastructure or deliver external pages. Before using this against production, connect the executor to your approved paging, deployment, or autoscaling API and retain the same policy gates and telemetry-link validation. Do not treat a recorded scale/rollback/failover request as proof that production infrastructure changed.
-
-## Persistence note
-
-SQLite data on Render's free filesystem may be lost on redeploy/restart. That is enough for simple evaluation during a live deployment, but if the evaluator expects state to survive restarts, attach a persistent disk or switch to a managed PostgreSQL database and update the database layer.
+The test scripts should be run locally first. Avoid running write tests against the challenge URL immediately before the final Save, because the challenge says only the most recent Save counts and each Check/Save consumes a quota slot.
